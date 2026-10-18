@@ -17,7 +17,7 @@ Dependencies: str
 ## Gate
 
 ```bash
-HNL=../cli/target/debug/hnl scripts/hnl-gate.sh
+HNL=../host-cli/target/debug/hnl scripts/hnl-gate.sh
 ```
 
 CI skips the gate while `src/` has no `.hnl` sources.
