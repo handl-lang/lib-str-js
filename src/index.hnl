@@ -1,0 +1,812 @@
+--- str-js -- JavaScript-backed implementation of the `str` contract.
+---
+--- Every arrow that a `String`/`Array`/`RegExp` prototype method (or a
+--- `Math`-free global like `Array.from`) covers goes through the
+--- host-injected `js.call`/`js.invoke` marshaller; everything else is
+--- composed in pure handl over the char-list floor (`_chars`/`_str`),
+--- mirroring `str-handl` arrow for arrow.
+---
+--- Encoding: the `str` contract counts chars in Unicode scalar values;
+--- JS strings are UTF-16. Every char-indexed or char-counting path goes
+--- through `_chars` (`Array.from`, which iterates code points) and pure
+--- list ops, so `length`, `char_at`, `slice`, `split_at`, `find`,
+--- `rfind`, `count` (empty pattern), `lines`, `split_whitespace`,
+--- `trim_matches`, `reverse`, the case converters, `pad_*`, `truncate`,
+--- `slugify`, `levenshtein` and `similarity` agree with `str-handl` on
+--- astral input. Native JS methods are used only where UTF-16 vs
+--- code-point cannot leak into the result: `includes`/`startsWith`/
+--- `endsWith` (boolean), `split` with a non-empty separator (literal,
+--- non-overlapping — same scan as `str-handl`), `repeat`, `join`,
+--- whole-string `toUpperCase`/`toLowerCase`/`trim*`, and
+--- `indexOf`/`lastIndexOf` (whose UTF-16 offsets are converted back to
+--- code-point indices before returning).
+---
+--- Deliberate divergences / notes:
+--- - `find`/`rfind` return code-point indices (the UTF-16 offset from
+---   `indexOf`/`lastIndexOf` is converted via `_slen` of the prefix).
+---   `find("", _)` is -1 and `rfind(_, "")` is the code-point length,
+---   matching `str-handl`'s scan semantics (not raw JS `indexOf`,
+---   which returns 0 for `("","")`).
+--- - `contains` guards the empty haystack: `contains("", _)` is false
+---   (`str-handl`'s `find_idx` finds nothing in an empty char list;
+---   JS `"".includes("")` would say true).
+--- - `count` is `len(split(s, pat)) - 1`; the empty-pattern case falls
+---   out of `_split`'s `["", ...chars, ""]` shape, giving `len+1` like
+---   `str-handl`.
+--- - `replace` is `join(split(s, old), to)` — literal, non-overlapping,
+---   all occurrences; the empty-`old` case inserts `to` at every code
+---   point boundary, matching `str-handl`/Rust `replace` semantics
+---   (JS `replaceAll` would also work but interprets `$` patterns in
+---   the replacement, which `str-handl` does not).
+--- - `replace_first` splices at the `find` index; empty `old` prepends
+---   `to` (Rust `replacen("", to, 1)` semantics).
+--- - Whole-string `upper`/`lower` use ECMAScript default case
+---   conversion, which is context-sensitive (Final_Sigma: `"ΟΣ"`
+---   lowercases to `"ος"` where `str-handl`'s per-char Rust maps give
+---   `"οσ"`). The composed paths (`capitalize`, `title_case`,
+---   `snake_case`, `camel_case`, `pascal_case`, `kebab_case`,
+---   `slugify`) map case per char through single-char JS calls, matching
+---   `str-handl`'s per-char `char.to_upper`/`to_lower` semantics.
+---   Case maps may expand (`ß`->`SS`, `İ`->`i̇`) — the `char` contract
+---   documents the same.
+--- - `trim`/`trim_start`/`trim_end` use the JS whitespace set (includes
+---   U+FEFF, excludes U+0085 NEL) rather than Rust
+---   `char::is_whitespace`'s `White_Space` property — an edge divergence
+---   on exactly those two code points.
+--- - `is_alpha`/`is_numeric`/`is_alphanumeric` test the whole string
+---   against `\p{Alphabetic}` / `\p{Nd}`/`\p{Nl}`/`\p{No}` (nonempty
+---   required, matching `str-handl`): the same Unicode properties the
+---   Rust `char` predicates use, modulo Unicode version skew. Per-char
+---   predicates (`_is_ws_c`, `_is_upper_c`, `_is_lower_c`,
+---   `_is_alnum_c`) use `\p{White_Space}`/`\p{Uppercase}`/
+---   `\p{Lowercase}`/`\p{Alphabetic}`+`\p{N}` for the composed paths.
+--- - List-valued results (`split`, `lines`, `split_at`,
+---   `split_whitespace`, `_chars`) use the `js_object` descriptor —
+---   the js ffi has no `js_array` kind; `js_object` is the documented
+---   catch-all for sequences. Under the compile-js default shim the
+---   descriptors are ignored and a JS array already IS the lowered
+---   `Arr` representation, so lists round-trip natively.
+--- - `levenshtein`, `similarity`, `word_wrap`, the `*_case` family,
+---   `slugify`, `trim_matches`, `pad_*`, `strip_*` and `truncate` are
+---   pure-handl compositions over per-char ffi calls — correct but not
+---   the per-runtime fast path; the native `String`/`Array` methods
+---   above are.
+--- - `char_at` raises via `error.raise` on out-of-bounds (the
+---   `char-native` `char.at` behavior); `slice`/`split_at` raise on
+---   negative indices for the same reason.
+--- - Unlike `str-c`/`str-handl` this backend is a single module:
+---   `str-js/<arrow>` submodule paths do not exist; consumers import
+---   from `"str-js"`.
+
+from "js" import { call, invoke }
+
+-- ---------------------------------------------------------------------------
+-- Internal helpers.
+-- ---------------------------------------------------------------------------
+
+-- The code-point char list of `s`: `Array.from` iterates a string by
+-- code point (not UTF-16 unit), which is the contract's char notion.
+_chars :: (s) ~> call("Array", "from", [s], ["js_string"], "js_object", false)
+
+-- `from_chars`: join a list of strings with no separator. The receiver
+-- is a JS array (the lowered `Arr`), so `Array.prototype.join` applies.
+_str :: (cs) ~> invoke(cs, "join", [""], ["js_string"], "js_string", false)
+
+_llen :: (xs) ~> do {
+  n := 0
+  for _ in xs { do {
+    n := n + 1
+  } }
+  n
+}
+
+-- Code-point length of `s`.
+_slen :: (s) ~> _llen(_chars(s))
+
+_lrev :: (xs) ~> do {
+  acc := []
+  for x in xs { do {
+    acc := [x, ...acc]
+  } }
+  acc
+}
+
+-- `take`/`drop` over the JS array via `Array.prototype.slice` (clamped,
+-- non-mutating). `n <= 0` short-circuits so a negative count can never
+-- reach `slice`'s negative-index semantics.
+_ltake :: (xs, n) ~> do {
+  if n <= 0 {
+    []
+  } else {
+    invoke(xs, "slice", [0, n], ["js_number", "js_number"], "js_object", false)
+  }
+}
+
+_ldrop :: (xs, n) ~> do {
+  if n <= 0 {
+    xs
+  } else {
+    invoke(xs, "slice", [n], ["js_number"], "js_object", false)
+  }
+}
+
+_lappend :: (a, b) ~> do {
+  acc := b
+  for x in _lrev(a) { do {
+    acc := [x, ...acc]
+  } }
+  acc
+}
+
+_lmember :: (x, xs) ~> do {
+  found := false
+  for y in xs { do {
+    if !found && y == x {
+      found := true
+    }
+  } }
+  found
+}
+
+-- Head of a nonempty list (callers guard; `[]` is a match failure, same
+-- as `str-handl`'s `head`).
+_lhead :: (xs) ~> match xs {
+  [h, ...t]: h
+}
+
+_last :: (xs) ~> _lhead(_lrev(xs))
+
+-- `[f(x) for x in xs]`, order preserved.
+_lmap :: (xs, f) ~> do {
+  acc := []
+  for x in xs { do {
+    acc := [f(x), ...acc]
+  } }
+  _lrev(acc)
+}
+
+-- `ps` is a prefix of `xs` (element-wise).
+_lprefmatch :: (xs, ps) ~> do {
+  ok := true
+  ys := xs
+  for p in ps { do {
+    if ok {
+      if _llen(ys) == 0 {
+        ok := false
+      } else {
+        if _lhead(ys) == p {
+          ys := _ldrop(ys, 1)
+        } else {
+          ok := false
+        }
+      }
+    }
+  } }
+  ok
+}
+
+-- `xs` without the longest leading run satisfying `p`.
+_ldrop_while :: (xs, p) ~> do {
+  dropping := true
+  out := []
+  for x in xs { do {
+    if dropping && !p(x) {
+      dropping := false
+    }
+    if !dropping {
+      out := [x, ...out]
+    }
+  } }
+  _lrev(out)
+}
+
+-- A JS `RegExp` via the `RegExp` global factory (`call` only dispatches
+-- functions; `RegExp(pat, "u")` without `new` still yields a regex).
+-- The `u` flag enables `\p{...}` Unicode property escapes.
+_re :: (pat) ~> call("globalThis", "RegExp", [pat, "u"], ["js_string", "js_string"], "js_object", false)
+
+-- `re.test(s)` — `invoke` dispatches the method on the regex receiver.
+_ret :: (re, s) ~> invoke(re, "test", [s], ["js_string"], "js_boolean", false)
+
+-- Per-char case maps and class predicates (single-char strings in,
+-- possibly multi-char strings out — JS case maps expand, matching the
+-- `char.to_*` contract note).
+_cu :: (c) ~> invoke(c, "toUpperCase", [], [], "js_string", false)
+
+_cl :: (c) ~> invoke(c, "toLowerCase", [], [], "js_string", false)
+
+_is_ws_c :: (c) ~> _ret(_re("^\\p{White_Space}$"), c)
+
+_is_upper_c :: (c) ~> _ret(_re("^\\p{Uppercase}$"), c)
+
+_is_lower_c :: (c) ~> _ret(_re("^\\p{Lowercase}$"), c)
+
+_is_alnum_c :: (c) ~> _ret(_re("^[\\p{Alphabetic}\\p{Nd}\\p{Nl}\\p{No}]$"), c)
+
+-- Whole-string classifiers (`str-handl` requires nonempty input).
+_is_alpha_s :: (s) ~> do {
+  if s == "" {
+    false
+  } else {
+    _ret(_re("^[\\p{Alphabetic}]+$"), s)
+  }
+}
+
+_is_numeric_s :: (s) ~> do {
+  if s == "" {
+    false
+  } else {
+    _ret(_re("^[\\p{Nd}\\p{Nl}\\p{No}]+$"), s)
+  }
+}
+
+_is_alnum_s :: (s) ~> do {
+  if s == "" {
+    false
+  } else {
+    _ret(_re("^[\\p{Alphabetic}\\p{Nd}\\p{Nl}\\p{No}]+$"), s)
+  }
+}
+
+-- `join` a list of strings with `sep` (the list lowers to a JS array,
+-- so `Array.prototype.join` applies).
+_join :: (xs, sep) ~> invoke(xs, "join", [sep], ["js_string"], "js_string", false)
+
+-- `str.split` core: empty `sep` yields `["", ...chars, ""]` (Rust
+-- `split("")` semantics, code-point chars); otherwise JS `split` —
+-- literal, non-overlapping, identical scan to `str-handl`.
+_split :: (s, sep) ~> do {
+  if sep == "" {
+    _lappend([""], _lappend(_chars(s), [""]))
+  } else {
+    invoke(s, "split", [sep], ["js_string"], "js_object", false)
+  }
+}
+
+-- `s[a..b]` in code points; `b - a <= 0` yields `""` (saturating, like
+-- `char.slice`). Negative indices raise — `char.slice` rejects them.
+_substr :: (s, a, b) ~> do {
+  if a < 0 || b < 0 {
+    error.raise("str-js: slice: negative index")
+  } else {
+    cs := _chars(s)
+    _str(_ltake(_ldrop(cs, a), b - a))
+  }
+}
+
+-- `str.find` core: leftmost occurrence as a CODE-POINT index, -1 on
+-- miss. The UTF-16 offset from `indexOf` is converted by measuring the
+-- prefix. Empty haystack is -1 even for an empty needle (`find_idx`
+-- scans zero chars).
+_find :: (s, pat) ~> do {
+  if s == "" {
+    0 - 1
+  } else {
+    u := invoke(s, "indexOf", [pat], ["js_string"], "js_number", false)
+    if u < 0 {
+      0 - 1
+    } else {
+      _slen(invoke(s, "slice", [0, u], ["js_number", "js_number"], "js_string", false))
+    }
+  }
+}
+
+-- `str.rfind` core: rightmost occurrence as a CODE-POINT index.
+-- `lastIndexOf` gives the greatest UTF-16 start offset — the same
+-- position `str-handl`'s scan records (overlapping matches included).
+_rfind :: (s, pat) ~> do {
+  if pat == "" {
+    _slen(s)
+  } else {
+    if s == "" {
+      0 - 1
+    } else {
+      u := invoke(s, "lastIndexOf", [pat], ["js_string"], "js_number", false)
+      if u < 0 {
+        0 - 1
+      } else {
+        _slen(invoke(s, "slice", [0, u], ["js_number", "js_number"], "js_string", false))
+      }
+    }
+  }
+}
+
+-- `str.lines` core (Rust `str::lines`): `\r\n` is one terminator, a
+-- trailing `\n` yields no trailing empty piece, `""` yields `[""]`.
+_lines :: (s) ~> do {
+  if _slen(s) == 0 {
+    [""]
+  } else {
+    cs := _chars(s)
+    cur := []
+    pieces_rev := []
+    for h in cs { do {
+      if h == "\n" {
+        pieces_rev := [_str(_lrev(cur)), ...pieces_rev]
+        cur := []
+      } else {
+        cur := [h, ...cur]
+      }
+    } }
+    pieces := _lrev([_str(_lrev(cur)), ...pieces_rev])
+    pieces2 := if _last(cs) == "\n" {
+      _ltake(pieces, _llen(pieces) - 1)
+    } else {
+      pieces
+    }
+    _lmap(pieces2, w ~> do {
+      wc := _chars(w)
+      if _llen(wc) == 0 {
+        w
+      } else {
+        if _last(wc) == "\r" {
+          _str(_ltake(wc, _llen(wc) - 1))
+        } else {
+          w
+        }
+      }
+    })
+  }
+}
+
+-- `str.split_whitespace` core (Rust `str::split_whitespace`).
+_split_ws :: (s) ~> do {
+  cs := _ldrop_while(_chars(s), c ~> _is_ws_c(c))
+  cur := []
+  pieces := []
+  for h in cs { do {
+    if _is_ws_c(h) {
+      if _llen(cur) > 0 {
+        pieces := [_str(_lrev(cur)), ...pieces]
+        cur := []
+      }
+    } else {
+      cur := [h, ...cur]
+    }
+  } }
+  if _llen(cur) > 0 {
+    pieces := [_str(_lrev(cur)), ...pieces]
+  }
+  _lrev(pieces)
+}
+
+-- `str.levenshtein` core: two-row DP over the code-point char lists,
+-- O(n*m) time / O(m) space — ported from `str-handl`.
+_lev :: (a, b) ~> do {
+  min3 := (x, y, z) ~> do {
+    ab := if x < y { x } else { y }
+    if ab < z { ab } else { z }
+  }
+  iota := (xs) ~> do {
+    rrow := [0]
+    i := 1
+    for _ in xs { do {
+      rrow := [i, ...rrow]
+      i := i + 1
+    } }
+    _lrev(rrow)
+  }
+  lev_row := (ach, bcs, prev, i) ~> do {
+    currev := [i + 1]
+    pr := prev
+    for bch in bcs { do {
+      cost := if ach == bch { 0 } else { 1 }
+      cj := min3(_lhead(_ldrop(pr, 1)) + 1, _lhead(currev) + 1, _lhead(pr) + cost)
+      currev := [cj, ...currev]
+      pr := _ldrop(pr, 1)
+    } }
+    _lrev(currev)
+  }
+  acs := _chars(a)
+  bcs := _chars(b)
+  prev := iota(bcs)
+  i := 0
+  for ach in acs { do {
+    prev := lev_row(ach, bcs, prev, i)
+    i := i + 1
+  } }
+  _last(prev)
+}
+
+-- `str.pad_left`/`pad_right` core: cycle the code points of `p` to fill
+-- `s` to `n` chars (ported from `str-handl`'s `pad_to`).
+_pad_to :: (s, n, p, is_left) ~> do {
+  c := _slen(s)
+  if c >= n {
+    s
+  } else {
+    if p == "" {
+      s
+    } else {
+      pcs := _chars(p)
+      pad := while { need: n - c, pool: pcs, acc: [] } {
+        [need, pool, acc] ~> if need <= 0 {
+          { out: _lrev(acc) }
+        } else {
+          match pool {
+            []: { state: { need: need, pool: pcs, acc: acc } },
+            [h, ...t]: { state: { need: need - 1, pool: t, acc: [h, ...acc] } }
+          }
+        }
+      }
+      pad_str := _str(pad)
+      if is_left {
+        pad_str + s
+      } else {
+        s + pad_str
+      }
+    }
+  }
+}
+
+-- `str-handl`'s `split_words`: camel/Pascal boundary detection over the
+-- code-point char list (`-`, `_`, ` ` are separators; lower->upper and
+-- acronym->word boundaries split). Ported faithfully.
+_split_words :: (s) ~> do {
+  is_sep := (c) ~> if c == "-" {
+    true
+  } else {
+    if c == "_" {
+      true
+    } else {
+      c == " "
+    }
+  }
+  push_word := (cur, words) ~> do {
+    if _llen(cur) == 0 {
+      words
+    } else {
+      [_str(_lrev(cur)), ...words]
+    }
+  }
+  cur := []
+  words := []
+  for h in _chars(s) { do {
+    if is_sep(h) {
+      words := push_word(cur, words)
+      cur := []
+    } else {
+      if _is_upper_c(h) {
+        if _llen(cur) == 0 {
+          cur := [h]
+        } else {
+          if _is_lower_c(_lhead(cur)) {
+            words := push_word(cur, words)
+            cur := [h]
+          } else {
+            cur := [h, ...cur]
+          }
+        }
+      } else {
+        if _llen(cur) == 0 {
+          cur := [h]
+        } else {
+          if _is_upper_c(_lhead(cur)) && _llen(cur) > 1 {
+            last_ch := _lhead(cur)
+            words := push_word(_ldrop(cur, 1), words)
+            cur := [h, last_ch]
+          } else {
+            cur := [h, ...cur]
+          }
+        }
+      }
+    }
+  } }
+  words := push_word(cur, words)
+  lowered := []
+  for w in words { do {
+    lc := []
+    for c in _chars(w) { do {
+      lc := [_cl(c), ...lc]
+    } }
+    lowered := [_str(_lrev(lc)), ...lowered]
+  } }
+  lowered
+}
+
+-- `capitalize_first`: uppercase the first char, leave the rest
+-- untouched (used by `camel_case`/`pascal_case`, whose words arrive
+-- already lowercased from `_split_words`).
+_cap_first :: (w) ~> do {
+  wc := _chars(w)
+  match wc {
+    []: "",
+    [h, ...t]: _cu(h) + _str(t)
+  }
+}
+
+-- ---------------------------------------------------------------------------
+-- Exports — one per `str/<arrow>` contract signature.
+-- ---------------------------------------------------------------------------
+
+export upper := (s) ~> invoke(s, "toUpperCase", [], [], "js_string", false)
+
+export lower := (s) ~> invoke(s, "toLowerCase", [], [], "js_string", false)
+
+export trim := (s) ~> invoke(s, "trim", [], [], "js_string", false)
+
+export trim_start := (s) ~> invoke(s, "trimStart", [], [], "js_string", false)
+
+export trim_end := (s) ~> invoke(s, "trimEnd", [], [], "js_string", false)
+
+export trim_matches := (s, set) ~> do {
+  if set == "" {
+    s
+  } else {
+    setc := _chars(set)
+    in_set := (c) ~> _lmember(c, setc)
+    a := _ldrop_while(_chars(s), in_set)
+    b := _ldrop_while(_lrev(a), in_set)
+    _str(_lrev(b))
+  }
+}
+
+export reverse := (s) ~> _str(_lrev(_chars(s)))
+
+export length := (s) ~> _slen(s)
+
+export concat := (a, b) ~> a + b
+
+export is_empty := (s) ~> s == ""
+
+export equals := (a, b) ~> a == b
+
+export is_alpha := _is_alpha_s
+
+export is_numeric := _is_numeric_s
+
+export is_alphanumeric := _is_alnum_s
+
+export capitalize := (s) ~> do {
+  cs := _chars(s)
+  match cs {
+    []: "",
+    [h, ...t]: _cu(h) + _str(_lmap(t, c ~> _cl(c)))
+  }
+}
+
+export title_case := (s) ~> do {
+  acc := []
+  new_word := true
+  for h in _chars(s) { do {
+    if _is_ws_c(h) {
+      new_word := true
+      acc := [h, ...acc]
+    } else {
+      if new_word {
+        acc := [_cu(h), ...acc]
+      } else {
+        acc := [_cl(h), ...acc]
+      }
+      new_word := false
+    }
+  } }
+  _str(_lrev(acc))
+}
+
+export snake_case := (s) ~> _join(_split_words(s), "_")
+
+export camel_case := (s) ~> do {
+  ws := _split_words(s)
+  match ws {
+    []: "",
+    [h, ...t]: h + _join(_lmap(t, w ~> _cap_first(w)), "")
+  }
+}
+
+export pascal_case := (s) ~> _join(_lmap(_split_words(s), w ~> _cap_first(w)), "")
+
+export kebab_case := (s) ~> _join(_split_words(s), "-")
+
+export contains := (s, pat) ~> do {
+  if s == "" {
+    false
+  } else {
+    invoke(s, "includes", [pat], ["js_string"], "js_boolean", false)
+  }
+}
+
+export starts_with := (s, pat) ~> invoke(s, "startsWith", [pat], ["js_string"], "js_boolean", false)
+
+export ends_with := (s, pat) ~> invoke(s, "endsWith", [pat], ["js_string"], "js_boolean", false)
+
+export count := (s, pat) ~> _llen(_split(s, pat)) - 1
+
+export find := _find
+
+export rfind := _rfind
+
+export levenshtein := _lev
+
+export similarity := (a, b) ~> do {
+  la := _slen(a)
+  lb := _slen(b)
+  mx := if la > lb { la } else { lb }
+  if mx == 0 {
+    1.0
+  } else {
+    d := _lev(a, b)
+    1.0 - (d / (mx + 0.0))
+  }
+}
+
+export split := _split
+
+export join := _join
+
+export replace := (s, old, to) ~> _join(_split(s, old), to)
+
+export replace_first := (s, old, to) ~> do {
+  if old == "" {
+    to + s
+  } else {
+    i := _find(s, old)
+    if i < 0 {
+      s
+    } else {
+      m := _slen(old)
+      n := _slen(s)
+      _substr(s, 0, i) + to + _substr(s, i + m, n)
+    }
+  }
+}
+
+export repeat := (s, n) ~> do {
+  if n <= 0 {
+    ""
+  } else {
+    invoke(s, "repeat", [n], ["js_number"], "js_string", false)
+  }
+}
+
+export char_at := (s, i) ~> do {
+  cs := _chars(s)
+  n := _llen(cs)
+  if i < 0 {
+    error.raise("str-js: char_at index out of bounds")
+  } else {
+    if i >= n {
+      error.raise("str-js: char_at index out of bounds")
+    } else {
+      cs[i]
+    }
+  }
+}
+
+export slice := _substr
+
+export pad_left := (s, n, p) ~> _pad_to(s, n, p, true)
+
+export pad_right := (s, n, p) ~> _pad_to(s, n, p, false)
+
+export strip_prefix := (s, p) ~> do {
+  cs := _chars(s)
+  ps := _chars(p)
+  if _lprefmatch(cs, ps) {
+    _str(_ldrop(cs, _llen(ps)))
+  } else {
+    s
+  }
+}
+
+export strip_suffix := (s, p) ~> do {
+  cs := _chars(s)
+  ps := _chars(p)
+  rcs := _lrev(cs)
+  rps := _lrev(ps)
+  if _lprefmatch(rcs, rps) {
+    _str(_lrev(_ldrop(rcs, _llen(ps))))
+  } else {
+    s
+  }
+}
+
+export lines := _lines
+
+export split_at := (s, i) ~> do {
+  n := _slen(s)
+  mid := if i > n { n } else { i }
+  [_substr(s, 0, mid), _substr(s, mid, n)]
+}
+
+export split_whitespace := _split_ws
+
+export truncate := (s, m) ~> do {
+  c := _slen(s)
+  if c <= m {
+    s
+  } else {
+    suf := "..."
+    sl := _slen(suf)
+    cs := _chars(s)
+    if m < sl {
+      _str(_ltake(cs, m))
+    } else {
+      _str(_ltake(cs, m - sl)) + suf
+    }
+  }
+}
+
+export slugify := (s) ~> do {
+  lower := _str(_lmap(_chars(s), c ~> _cl(c)))
+  cs := _chars(lower)
+  mapped_rev := []
+  for h in cs { do {
+    if _is_alnum_c(h) {
+      mapped_rev := [h, ...mapped_rev]
+    } else {
+      if _is_ws_c(h) {
+        mapped_rev := ["-", ...mapped_rev]
+      } else {
+        if h == "-" {
+          mapped_rev := ["-", ...mapped_rev]
+        } else {
+          if h == "_" {
+            mapped_rev := ["-", ...mapped_rev]
+          }
+        }
+      }
+    }
+  } }
+  mapped := _lrev(mapped_rev)
+  t1 := _ldrop_while(mapped, c ~> c == "-")
+  t2 := _lrev(_ldrop_while(_lrev(t1), c ~> c == "-"))
+  acc := []
+  prev_dash := false
+  for h in t2 { do {
+    if h == "-" {
+      if !prev_dash {
+        acc := [h, ...acc]
+      }
+      prev_dash := true
+    } else {
+      acc := [h, ...acc]
+      prev_dash := false
+    }
+  } }
+  _str(_lrev(acc))
+}
+
+export word_wrap := (s, w) ~> do {
+  if w < 1 {
+    ""
+  } else {
+    ls := _lines(s)
+    out := ""
+    for ln in ls { do {
+      if ln == "" {
+        out := out + "\n"
+      } else {
+        ws := _split_ws(ln)
+        cur_len := 0
+        buf := ""
+        for word in ws { do {
+          wl := _slen(word)
+          if cur_len == 0 {
+            cur_len := wl
+            buf := buf + word
+          } else {
+            if cur_len + 1 + wl <= w {
+              cur_len := cur_len + 1 + wl
+              buf := buf + " " + word
+            } else {
+              cur_len := wl
+              buf := buf + "\n" + word
+            }
+          }
+        } }
+        out := out + buf + "\n"
+      }
+    } }
+    ocs := _chars(out)
+    if _llen(ocs) == 0 {
+      ""
+    } else {
+      if _last(ocs) == "\n" {
+        _str(_ltake(ocs, _llen(ocs) - 1))
+      } else {
+        out
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 [dependencies]
 str = { path = "../lib-str/src" }
+js = { path = "../lib-js/src" }
 
 # own package
 str-js = { path = "src" }

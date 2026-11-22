@@ -1,0 +1,329 @@
+--- str-js contract tests — mirror `lib-str-handl`'s per-arrow suites.
+---
+--- Most cases exercise `js.call`/`js.invoke` (`String`/`Array`/
+--- `RegExp` methods) and need a JS host; the pure-handl paths
+--- (`equals`, `is_empty`, `concat`) run anywhere. Astral-plane cases
+--- (`😀`) pin the code-point (not UTF-16) semantics the contract
+--- requires.
+
+from "./index" import * as str
+
+-- upper / lower ------------------------------------------------------------
+
+test_strjs_upper_basic := assert str.upper("hEllO") = "HELLO"
+test_strjs_upper_empty := assert str.upper("") = ""
+test_strjs_upper_already := assert str.upper("ABC") = "ABC"
+test_strjs_upper_digits_punct := assert str.upper("a1!") = "A1!"
+test_strjs_upper_spaces := assert str.upper("hello world") = "HELLO WORLD"
+test_strjs_upper_unicode := assert str.upper("héllo") = "HÉLLO"
+
+test_strjs_lower_basic := assert str.lower("HeLLo") = "hello"
+test_strjs_lower_empty := assert str.lower("") = ""
+test_strjs_lower_already := assert str.lower("abc") = "abc"
+test_strjs_lower_unicode := assert str.lower("HÉLLO") = "héllo"
+
+-- trim family ---------------------------------------------------------------
+
+test_strjs_trim_basic := assert str.trim("  hi  ") = "hi"
+test_strjs_trim_empty := assert str.trim("") = ""
+test_strjs_trim_no_ws := assert str.trim("abc") = "abc"
+test_strjs_trim_all := assert str.trim("   ") = ""
+
+test_strjs_trim_start_basic := assert str.trim_start("  hi") = "hi"
+test_strjs_trim_start_keep_end := assert str.trim_start("  hi  ") = "hi  "
+test_strjs_trim_end_basic := assert str.trim_end("hi  ") = "hi"
+test_strjs_trim_end_keep_start := assert str.trim_end("  hi  ") = "  hi"
+
+test_strjs_trim_matches_basic := assert str.trim_matches("xxhixx", "x") = "hi"
+test_strjs_trim_matches_empty_set := assert str.trim_matches("abc", "") = "abc"
+test_strjs_trim_matches_all_stripped := assert str.trim_matches("aaa", "a") = ""
+test_strjs_trim_matches_char_set := assert str.trim_matches("xyxabcxyx", "xy") = "abc"
+test_strjs_trim_matches_no_match := assert str.trim_matches("abc", "z") = "abc"
+test_strjs_trim_matches_dashes := assert str.trim_matches("--hi--", "-") = "hi"
+test_strjs_trim_matches_one_side := assert str.trim_matches("xyhi", "xy") = "hi"
+test_strjs_trim_matches_empty := assert str.trim_matches("", "x") = ""
+
+-- reverse / length / concat / equality --------------------------------------
+
+test_strjs_reverse_basic := assert str.reverse("abc") = "cba"
+test_strjs_reverse_empty := assert str.reverse("") = ""
+test_strjs_reverse_palindrome := assert str.reverse("abba") = "abba"
+test_strjs_reverse_unicode := assert str.reverse("héllo") = "olléh"
+test_strjs_reverse_astral := assert str.reverse("a😀b") = "b😀a"
+
+test_strjs_length_basic := assert str.length("hello") = 5
+test_strjs_length_empty := assert str.length("") = 0
+test_strjs_length_unicode := assert str.length("héllo") = 5
+test_strjs_length_astral := assert str.length("a😀b") = 3
+
+test_strjs_concat_basic := assert str.concat("foo", "bar") = "foobar"
+test_strjs_concat_empty := assert str.concat("", "x") = "x"
+test_strjs_concat_both_empty := assert str.concat("", "") = ""
+
+test_strjs_is_empty_true := assert str.is_empty("") = true
+test_strjs_is_empty_false := assert str.is_empty("x") = false
+
+test_strjs_equals_same := assert str.equals("abc", "abc") = true
+test_strjs_equals_diff := assert str.equals("abc", "abd") = false
+test_strjs_equals_empty := assert str.equals("", "") = true
+
+-- classifiers ----------------------------------------------------------------
+
+test_strjs_is_alpha_alpha := assert str.is_alpha("abc") = true
+test_strjs_is_alpha_digit := assert str.is_alpha("a1") = false
+test_strjs_is_alpha_empty := assert str.is_alpha("") = false
+test_strjs_is_alpha_mixed_case := assert str.is_alpha("abcXYZ") = true
+test_strjs_is_alpha_punct := assert str.is_alpha("a-b") = false
+test_strjs_is_alpha_space := assert str.is_alpha(" ") = false
+test_strjs_is_alpha_unicode := assert str.is_alpha("héllo") = true
+
+test_strjs_is_numeric_digits := assert str.is_numeric("123") = true
+test_strjs_is_numeric_letter := assert str.is_numeric("1a") = false
+test_strjs_is_numeric_empty := assert str.is_numeric("") = false
+test_strjs_is_numeric_dot := assert str.is_numeric("1.5") = false
+test_strjs_is_numeric_zero := assert str.is_numeric("0") = true
+
+test_strjs_is_alphanumeric_mixed := assert str.is_alphanumeric("a1") = true
+test_strjs_is_alphanumeric_punct := assert str.is_alphanumeric("a!") = false
+test_strjs_is_alphanumeric_empty := assert str.is_alphanumeric("") = false
+test_strjs_is_alphanumeric_alpha := assert str.is_alphanumeric("abc") = true
+test_strjs_is_alphanumeric_digits := assert str.is_alphanumeric("123") = true
+test_strjs_is_alphanumeric_space := assert str.is_alphanumeric("a b") = false
+
+-- case conversion ------------------------------------------------------------
+
+test_strjs_capitalize_lower := assert str.capitalize("hello") = "Hello"
+test_strjs_capitalize_shout := assert str.capitalize("hELLO") = "Hello"
+test_strjs_capitalize_empty := assert str.capitalize("") = ""
+test_strjs_capitalize_already := assert str.capitalize("Hello") = "Hello"
+test_strjs_capitalize_single := assert str.capitalize("a") = "A"
+test_strjs_capitalize_digit_first := assert str.capitalize("1abc") = "1abc"
+
+test_strjs_title_case_basic := assert str.title_case("the quick fox") = "The Quick Fox"
+test_strjs_title_case_underscore_not_sep := assert str.title_case("hello_world") = "Hello_world"
+test_strjs_title_case_shout := assert str.title_case("HELLO WORLD") = "Hello World"
+test_strjs_title_case_empty := assert str.title_case("") = ""
+test_strjs_title_case_double_space := assert str.title_case("a  b") = "A  B"
+test_strjs_title_case_dash_not_sep := assert str.title_case("hello-world") = "Hello-world"
+
+test_strjs_snake_case_camel := assert str.snake_case("helloWorld now") = "hello_world_now"
+test_strjs_snake_case_acronym := assert str.snake_case("ABCDef") = "abc_def"
+test_strjs_snake_case_empty := assert str.snake_case("") = ""
+test_strjs_snake_case_already := assert str.snake_case("already_snake") = "already_snake"
+test_strjs_snake_case_dashes := assert str.snake_case("hello-world") = "hello_world"
+test_strjs_snake_case_pascal := assert str.snake_case("HelloWorld") = "hello_world"
+test_strjs_snake_case_all_caps := assert str.snake_case("ABC") = "abc"
+
+test_strjs_camel_case_basic := assert str.camel_case("hello_world now") = "helloWorldNow"
+test_strjs_camel_case_empty := assert str.camel_case("") = ""
+test_strjs_camel_case_acronym := assert str.camel_case("ABCDef-foo_bar") = "abcDefFooBar"
+test_strjs_camel_case_single := assert str.camel_case("hello") = "hello"
+test_strjs_camel_case_spaces := assert str.camel_case("hello world") = "helloWorld"
+
+test_strjs_pascal_case_basic := assert str.pascal_case("hello_world") = "HelloWorld"
+test_strjs_pascal_case_empty := assert str.pascal_case("") = ""
+test_strjs_pascal_case_single := assert str.pascal_case("hello") = "Hello"
+test_strjs_pascal_case_letters := assert str.pascal_case("a b c") = "ABC"
+test_strjs_pascal_case_acronym := assert str.pascal_case("ABC") = "Abc"
+test_strjs_pascal_case_mixed := assert str.pascal_case("hello world-again") = "HelloWorldAgain"
+
+test_strjs_kebab_case_basic := assert str.kebab_case("helloWorld now") = "hello-world-now"
+test_strjs_kebab_case_empty := assert str.kebab_case("") = ""
+test_strjs_kebab_case_single := assert str.kebab_case("hello") = "hello"
+test_strjs_kebab_case_seps := assert str.kebab_case("a_b-c d") = "a-b-c-d"
+test_strjs_kebab_case_caps := assert str.kebab_case("ABC") = "abc"
+
+-- search ---------------------------------------------------------------------
+
+test_strjs_contains_hit := assert str.contains("hello", "ell") = true
+test_strjs_contains_miss := assert str.contains("hello", "z") = false
+test_strjs_contains_empty_pat := assert str.contains("abc", "") = true
+test_strjs_contains_empty_s := assert str.contains("", "a") = false
+test_strjs_contains_both_empty := assert str.contains("", "") = false
+test_strjs_contains_whole := assert str.contains("abc", "abc") = true
+
+test_strjs_starts_with_hit := assert str.starts_with("hello", "he") = true
+test_strjs_starts_with_miss := assert str.starts_with("hello", "lo") = false
+test_strjs_starts_with_empty_pat := assert str.starts_with("abc", "") = true
+test_strjs_starts_with_empty_s := assert str.starts_with("", "a") = false
+test_strjs_starts_with_both_empty := assert str.starts_with("", "") = true
+test_strjs_starts_with_longer := assert str.starts_with("abc", "abcd") = false
+
+test_strjs_ends_with_hit := assert str.ends_with("hello", "lo") = true
+test_strjs_ends_with_miss := assert str.ends_with("hello", "he") = false
+test_strjs_ends_with_empty_pat := assert str.ends_with("abc", "") = true
+test_strjs_ends_with_empty_s := assert str.ends_with("", "a") = false
+test_strjs_ends_with_both_empty := assert str.ends_with("", "") = true
+test_strjs_ends_with_z := assert str.ends_with("abc", "z") = false
+
+test_strjs_count_basic := assert str.count("aXaXa", "a") = 3
+test_strjs_count_no_overlap := assert str.count("aaa", "aa") = 1
+test_strjs_count_empty_pat := assert str.count("abc", "") = 4
+test_strjs_count_empty_s := assert str.count("", "a") = 0
+test_strjs_count_empty_both := assert str.count("", "") = 1
+test_strjs_count_repeat := assert str.count("hello", "l") = 2
+test_strjs_count_miss := assert str.count("abc", "z") = 0
+test_strjs_count_multi := assert str.count("ababab", "ab") = 3
+
+test_strjs_find_basic := assert str.find("hello", "llo") = 2
+test_strjs_find_miss := assert str.find("abc", "z") = -1
+test_strjs_find_empty_pat := assert str.find("abc", "") = 0
+test_strjs_find_both_empty := assert str.find("", "") = -1
+test_strjs_find_first := assert str.find("aXa", "a") = 0
+test_strjs_find_empty_s := assert str.find("", "a") = -1
+test_strjs_find_end := assert str.find("hello", "o") = 4
+test_strjs_find_astral := assert str.find("a😀b", "b") = 2
+
+test_strjs_rfind_basic := assert str.rfind("abcabc", "bc") = 4
+test_strjs_rfind_last := assert str.rfind("aXa", "a") = 2
+test_strjs_rfind_miss := assert str.rfind("abc", "z") = -1
+test_strjs_rfind_both_empty := assert str.rfind("", "") = 0
+test_strjs_rfind_empty_pat := assert str.rfind("abc", "") = 3
+test_strjs_rfind_l := assert str.rfind("hello", "l") = 3
+test_strjs_rfind_single := assert str.rfind("abc", "b") = 1
+
+-- distance -------------------------------------------------------------------
+
+test_strjs_levenshtein_classic := assert str.levenshtein("kitten", "sitting") = 3
+test_strjs_levenshtein_empty_b := assert str.levenshtein("", "ab") = 2
+test_strjs_levenshtein_same := assert str.levenshtein("abc", "abc") = 0
+test_strjs_levenshtein_both_empty := assert str.levenshtein("", "") = 0
+test_strjs_levenshtein_empty_a := assert str.levenshtein("ab", "") = 2
+test_strjs_levenshtein_subst := assert str.levenshtein("abc", "abd") = 1
+test_strjs_levenshtein_flaw := assert str.levenshtein("flaw", "lawn") = 2
+
+test_strjs_similarity_same := assert str.similarity("kitten", "kitten") = 1.0
+test_strjs_similarity_empty_b := assert str.similarity("abc", "") = 0.0
+test_strjs_similarity_both_empty := assert str.similarity("", "") = 1.0
+test_strjs_similarity_classic := assert str.similarity("kitten", "sitting") = 0.5714285714285714
+test_strjs_similarity_same2 := assert str.similarity("abc", "abc") = 1.0
+
+-- transform ------------------------------------------------------------------
+
+test_strjs_split_basic := assert str.split("a,b,c", ",") = ["a", "b", "c"]
+test_strjs_split_empty_sep := assert str.split("ab", "") = ["", "a", "b", ""]
+test_strjs_split_empty_s := assert str.split("", ",") = [""]
+test_strjs_split_empty_field := assert str.split("a,,b", ",") = ["a", "", "b"]
+test_strjs_split_whole_sep := assert str.split("abc", "abc") = ["", ""]
+test_strjs_split_dash := assert str.split("a-b-c", "-") = ["a", "b", "c"]
+test_strjs_split_miss := assert str.split("x", "y") = ["x"]
+test_strjs_split_trailing := assert str.split("a,b,", ",") = ["a", "b", ""]
+test_strjs_split_astral := assert str.split("a😀b", "") = ["", "a", "😀", "b", ""]
+
+test_strjs_join_basic := assert str.join(["a", "b"], "-") = "a-b"
+test_strjs_join_empty := assert str.join([], "-") = ""
+test_strjs_join_single := assert str.join(["a"], "-") = "a"
+test_strjs_join_empty_sep := assert str.join(["a", "b", "c"], "") = "abc"
+test_strjs_join_empty_elem := assert str.join(["", "a"], "-") = "-a"
+test_strjs_join_three := assert str.join(["a", "b", "c"], ", ") = "a, b, c"
+
+test_strjs_replace_basic := assert str.replace("aaa", "a", "b") = "bbb"
+test_strjs_replace_empty_pat := assert str.replace("abc", "", "-") = "-a-b-c-"
+test_strjs_replace_empty_s := assert str.replace("", "a", "b") = ""
+test_strjs_replace_wider := assert str.replace("aaa", "a", "bb") = "bbbbbb"
+test_strjs_replace_partial := assert str.replace("hello", "l", "L") = "heLLo"
+test_strjs_replace_miss := assert str.replace("abc", "z", "x") = "abc"
+test_strjs_replace_word := assert str.replace("a-b-a", "a", "x") = "x-b-x"
+
+test_strjs_replace_first_basic := assert str.replace_first("aaa", "a", "b") = "baa"
+test_strjs_replace_first_empty_repl := assert str.replace_first("aaa", "a", "") = "aa"
+test_strjs_replace_first_miss := assert str.replace_first("abc", "z", "x") = "abc"
+test_strjs_replace_first_first_only := assert str.replace_first("aXaXa", "a", "b") = "bXaXa"
+test_strjs_replace_first_empty_s := assert str.replace_first("", "a", "b") = ""
+test_strjs_replace_first_empty_pat := assert str.replace_first("abc", "", "-") = "-abc"
+
+test_strjs_repeat_basic := assert str.repeat("ab", 3) = "ababab"
+test_strjs_repeat_zero := assert str.repeat("ab", 0) = ""
+test_strjs_repeat_negative := assert str.repeat("ab", -1) = ""
+test_strjs_repeat_empty_s := assert str.repeat("", 3) = ""
+test_strjs_repeat_one := assert str.repeat("x", 1) = "x"
+test_strjs_repeat_five := assert str.repeat("ab", 5) = "ababababab"
+
+test_strjs_char_at_mid := assert str.char_at("abc", 1) = "b"
+test_strjs_char_at_first := assert str.char_at("abc", 0) = "a"
+test_strjs_char_at_last := assert str.char_at("abc", 2) = "c"
+test_strjs_char_at_end := assert str.char_at("hello", 4) = "o"
+test_strjs_char_at_astral := assert str.char_at("a😀b", 1) = "😀"
+
+test_strjs_slice_basic := assert str.slice("hello", 1, 3) = "el"
+test_strjs_slice_clamped := assert str.slice("hello", 3, 99) = "lo"
+test_strjs_slice_whole := assert str.slice("abc", 0, 3) = "abc"
+test_strjs_slice_reversed := assert str.slice("abc", 2, 1) = ""
+test_strjs_slice_empty_range := assert str.slice("abc", 3, 3) = ""
+test_strjs_slice_mid := assert str.slice("abcdef", 2, 4) = "cd"
+test_strjs_slice_zero := assert str.slice("abc", 0, 0) = ""
+test_strjs_slice_astral := assert str.slice("a😀b", 1, 2) = "😀"
+
+test_strjs_pad_left_basic := assert str.pad_left("hi", 5, "*") = "***hi"
+test_strjs_pad_left_cycle := assert str.pad_left("hi", 5, "ab") = "abahi"
+test_strjs_pad_left_enough := assert str.pad_left("hi", 2, "*") = "hi"
+test_strjs_pad_left_empty_pad := assert str.pad_left("hi", 5, "") = "hi"
+test_strjs_pad_left_short := assert str.pad_left("hi", 1, "*") = "hi"
+test_strjs_pad_left_zeros := assert str.pad_left("42", 5, "0") = "00042"
+test_strjs_pad_left_empty_s := assert str.pad_left("", 3, "x") = "xxx"
+
+test_strjs_pad_right_basic := assert str.pad_right("hi", 5, "*") = "hi***"
+test_strjs_pad_right_cycle := assert str.pad_right("hi", 5, "ab") = "hiaba"
+test_strjs_pad_right_enough := assert str.pad_right("hi", 2, "*") = "hi"
+test_strjs_pad_right_empty_pad := assert str.pad_right("hi", 5, "") = "hi"
+test_strjs_pad_right_zeros := assert str.pad_right("42", 5, "0") = "42000"
+
+test_strjs_strip_prefix_hit := assert str.strip_prefix("hello", "he") = "llo"
+test_strjs_strip_prefix_miss := assert str.strip_prefix("hello", "lo") = "hello"
+test_strjs_strip_prefix_empty := assert str.strip_prefix("abc", "") = "abc"
+test_strjs_strip_prefix_whole := assert str.strip_prefix("abc", "abc") = ""
+
+test_strjs_strip_suffix_hit := assert str.strip_suffix("hello", "lo") = "hel"
+test_strjs_strip_suffix_miss := assert str.strip_suffix("hello", "he") = "hello"
+test_strjs_strip_suffix_empty := assert str.strip_suffix("abc", "") = "abc"
+test_strjs_strip_suffix_whole := assert str.strip_suffix("abc", "abc") = ""
+
+test_strjs_lines_crlf := assert str.lines("a\nb\r\nc") = ["a", "b", "c"]
+test_strjs_lines_trailing := assert str.lines("a\n") = ["a"]
+test_strjs_lines_empty := assert str.lines("") = [""]
+test_strjs_lines_just_nl := assert str.lines("\n") = [""]
+test_strjs_lines_blank_mid := assert str.lines("a\n\nb") = ["a", "", "b"]
+test_strjs_lines_single := assert str.lines("a") = ["a"]
+test_strjs_lines_two := assert str.lines("a\nb") = ["a", "b"]
+
+test_strjs_split_at_mid := assert str.split_at("hello", 2) = ["he", "llo"]
+test_strjs_split_at_zero := assert str.split_at("abc", 0) = ["", "abc"]
+test_strjs_split_at_clamp := assert str.split_at("abc", 99) = ["abc", ""]
+test_strjs_split_at_end := assert str.split_at("abc", 3) = ["abc", ""]
+test_strjs_split_at_empty := assert str.split_at("", 0) = ["", ""]
+test_strjs_split_at_one := assert str.split_at("ab", 1) = ["a", "b"]
+test_strjs_split_at_astral := assert str.split_at("a😀b", 2) = ["a😀", "b"]
+
+test_strjs_split_whitespace_basic := assert str.split_whitespace("  a  b\tc ") = ["a", "b", "c"]
+test_strjs_split_whitespace_empty := assert str.split_whitespace("") = []
+test_strjs_split_whitespace_single := assert str.split_whitespace("a") = ["a"]
+test_strjs_split_whitespace_all_ws := assert str.split_whitespace("   ") = []
+test_strjs_split_whitespace_newline := assert str.split_whitespace("a\nb") = ["a", "b"]
+test_strjs_split_whitespace_two := assert str.split_whitespace("x  y") = ["x", "y"]
+
+test_strjs_truncate_basic := assert str.truncate("hello world", 8) = "hello..."
+test_strjs_truncate_fits := assert str.truncate("hi", 2) = "hi"
+test_strjs_truncate_tiny := assert str.truncate("hello", 2) = "he"
+test_strjs_truncate_exact_suf := assert str.truncate("hello", 3) = "..."
+test_strjs_truncate_exact_len := assert str.truncate("hello", 5) = "hello"
+test_strjs_truncate_longer := assert str.truncate("hello", 10) = "hello"
+test_strjs_truncate_four := assert str.truncate("abcdef", 4) = "a..."
+test_strjs_truncate_zero := assert str.truncate("abc", 0) = ""
+
+test_strjs_slugify_punct := assert str.slugify("Hello, World!") = "hello-world"
+test_strjs_slugify_spaces := assert str.slugify("  Hello World  ") = "hello-world"
+test_strjs_slugify_seps := assert str.slugify("a--b__c") = "a-b-c"
+test_strjs_slugify_empty := assert str.slugify("") = ""
+test_strjs_slugify_dashes := assert str.slugify("---") = ""
+test_strjs_slugify_plain := assert str.slugify("already") = "already"
+test_strjs_slugify_one := assert str.slugify("a b") = "a-b"
+test_strjs_slugify_mixed := assert str.slugify("Foo_Bar-Baz") = "foo-bar-baz"
+
+test_strjs_word_wrap_basic := assert str.word_wrap("the quick brown fox", 9) = "the quick\nbrown fox"
+test_strjs_word_wrap_exact := assert str.word_wrap("aaa bbb", 3) = "aaa\nbbb"
+test_strjs_word_wrap_long_word := assert str.word_wrap("aaa", 2) = "aaa"
+test_strjs_word_wrap_empty := assert str.word_wrap("", 5) = ""
+test_strjs_word_wrap_zero_w := assert str.word_wrap("a b", 0) = ""
+test_strjs_word_wrap_multiline := assert str.word_wrap("a\nb c", 3) = "a\nb c"
+test_strjs_word_wrap_three := assert str.word_wrap("one two three", 7) = "one two\nthree"
+test_strjs_word_wrap_fit := assert str.word_wrap("a b c", 5) = "a b c"
