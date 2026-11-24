@@ -86,13 +86,13 @@ from "js" import { call, invoke }
 
 -- The code-point char list of `s`: `Array.from` iterates a string by
 -- code point (not UTF-16 unit), which is the contract's char notion.
-_chars :: (s) ~> call("Array", "from", [s], ["js_string"], "js_object", false)
+_chars := (s) ~> call("Array", "from", [s], ["js_string"], "js_object", false)
 
 -- `from_chars`: join a list of strings with no separator. The receiver
 -- is a JS array (the lowered `Arr`), so `Array.prototype.join` applies.
-_str :: (cs) ~> invoke(cs, "join", [""], ["js_string"], "js_string", false)
+_str := (cs) ~> invoke(cs, "join", [""], ["js_string"], "js_string", false)
 
-_llen :: (xs) ~> do {
+_llen := (xs) ~> do {
   n := 0
   for _ in xs { do {
     n := n + 1
@@ -101,9 +101,9 @@ _llen :: (xs) ~> do {
 }
 
 -- Code-point length of `s`.
-_slen :: (s) ~> _llen(_chars(s))
+_slen := (s) ~> _llen(_chars(s))
 
-_lrev :: (xs) ~> do {
+_lrev := (xs) ~> do {
   acc := []
   for x in xs { do {
     acc := [x, ...acc]
@@ -114,7 +114,7 @@ _lrev :: (xs) ~> do {
 -- `take`/`drop` over the JS array via `Array.prototype.slice` (clamped,
 -- non-mutating). `n <= 0` short-circuits so a negative count can never
 -- reach `slice`'s negative-index semantics.
-_ltake :: (xs, n) ~> do {
+_ltake := (xs, n) ~> do {
   if n <= 0 {
     []
   } else {
@@ -122,7 +122,7 @@ _ltake :: (xs, n) ~> do {
   }
 }
 
-_ldrop :: (xs, n) ~> do {
+_ldrop := (xs, n) ~> do {
   if n <= 0 {
     xs
   } else {
@@ -130,7 +130,7 @@ _ldrop :: (xs, n) ~> do {
   }
 }
 
-_lappend :: (a, b) ~> do {
+_lappend := (a, b) ~> do {
   acc := b
   for x in _lrev(a) { do {
     acc := [x, ...acc]
@@ -138,7 +138,7 @@ _lappend :: (a, b) ~> do {
   acc
 }
 
-_lmember :: (x, xs) ~> do {
+_lmember := (x, xs) ~> do {
   found := false
   for y in xs { do {
     if !found && y == x {
@@ -150,14 +150,14 @@ _lmember :: (x, xs) ~> do {
 
 -- Head of a nonempty list (callers guard; `[]` is a match failure, same
 -- as `str-handl`'s `head`).
-_lhead :: (xs) ~> match xs {
+_lhead := (xs) ~> match xs {
   [h, ...t]: h
 }
 
-_last :: (xs) ~> _lhead(_lrev(xs))
+_last := (xs) ~> _lhead(_lrev(xs))
 
 -- `[f(x) for x in xs]`, order preserved.
-_lmap :: (xs, f) ~> do {
+_lmap := (xs, f) ~> do {
   acc := []
   for x in xs { do {
     acc := [f(x), ...acc]
@@ -166,7 +166,7 @@ _lmap :: (xs, f) ~> do {
 }
 
 -- `ps` is a prefix of `xs` (element-wise).
-_lprefmatch :: (xs, ps) ~> do {
+_lprefmatch := (xs, ps) ~> do {
   ok := true
   ys := xs
   for p in ps { do {
@@ -186,7 +186,7 @@ _lprefmatch :: (xs, ps) ~> do {
 }
 
 -- `xs` without the longest leading run satisfying `p`.
-_ldrop_while :: (xs, p) ~> do {
+_ldrop_while := (xs, p) ~> do {
   dropping := true
   out := []
   for x in xs { do {
@@ -203,28 +203,28 @@ _ldrop_while :: (xs, p) ~> do {
 -- A JS `RegExp` via the `RegExp` global factory (`call` only dispatches
 -- functions; `RegExp(pat, "u")` without `new` still yields a regex).
 -- The `u` flag enables `\p{...}` Unicode property escapes.
-_re :: (pat) ~> call("globalThis", "RegExp", [pat, "u"], ["js_string", "js_string"], "js_object", false)
+_re := (pat) ~> call("globalThis", "RegExp", [pat, "u"], ["js_string", "js_string"], "js_object", false)
 
 -- `re.test(s)` — `invoke` dispatches the method on the regex receiver.
-_ret :: (re, s) ~> invoke(re, "test", [s], ["js_string"], "js_boolean", false)
+_ret := (re, s) ~> invoke(re, "test", [s], ["js_string"], "js_boolean", false)
 
 -- Per-char case maps and class predicates (single-char strings in,
 -- possibly multi-char strings out — JS case maps expand, matching the
 -- `char.to_*` contract note).
-_cu :: (c) ~> invoke(c, "toUpperCase", [], [], "js_string", false)
+_cu := (c) ~> invoke(c, "toUpperCase", [], [], "js_string", false)
 
-_cl :: (c) ~> invoke(c, "toLowerCase", [], [], "js_string", false)
+_cl := (c) ~> invoke(c, "toLowerCase", [], [], "js_string", false)
 
-_is_ws_c :: (c) ~> _ret(_re("^\\p{White_Space}$"), c)
+_is_ws_c := (c) ~> _ret(_re("^\\p{White_Space}$"), c)
 
-_is_upper_c :: (c) ~> _ret(_re("^\\p{Uppercase}$"), c)
+_is_upper_c := (c) ~> _ret(_re("^\\p{Uppercase}$"), c)
 
-_is_lower_c :: (c) ~> _ret(_re("^\\p{Lowercase}$"), c)
+_is_lower_c := (c) ~> _ret(_re("^\\p{Lowercase}$"), c)
 
-_is_alnum_c :: (c) ~> _ret(_re("^[\\p{Alphabetic}\\p{Nd}\\p{Nl}\\p{No}]$"), c)
+_is_alnum_c := (c) ~> _ret(_re("^[\\p{Alphabetic}\\p{Nd}\\p{Nl}\\p{No}]$"), c)
 
 -- Whole-string classifiers (`str-handl` requires nonempty input).
-_is_alpha_s :: (s) ~> do {
+_is_alpha_s := (s) ~> do {
   if s == "" {
     false
   } else {
@@ -232,7 +232,7 @@ _is_alpha_s :: (s) ~> do {
   }
 }
 
-_is_numeric_s :: (s) ~> do {
+_is_numeric_s := (s) ~> do {
   if s == "" {
     false
   } else {
@@ -240,7 +240,7 @@ _is_numeric_s :: (s) ~> do {
   }
 }
 
-_is_alnum_s :: (s) ~> do {
+_is_alnum_s := (s) ~> do {
   if s == "" {
     false
   } else {
@@ -250,12 +250,12 @@ _is_alnum_s :: (s) ~> do {
 
 -- `join` a list of strings with `sep` (the list lowers to a JS array,
 -- so `Array.prototype.join` applies).
-_join :: (xs, sep) ~> invoke(xs, "join", [sep], ["js_string"], "js_string", false)
+_join := (xs, sep) ~> invoke(xs, "join", [sep], ["js_string"], "js_string", false)
 
 -- `str.split` core: empty `sep` yields `["", ...chars, ""]` (Rust
 -- `split("")` semantics, code-point chars); otherwise JS `split` —
 -- literal, non-overlapping, identical scan to `str-handl`.
-_split :: (s, sep) ~> do {
+_split := (s, sep) ~> do {
   if sep == "" {
     _lappend([""], _lappend(_chars(s), [""]))
   } else {
@@ -265,7 +265,7 @@ _split :: (s, sep) ~> do {
 
 -- `s[a..b]` in code points; `b - a <= 0` yields `""` (saturating, like
 -- `char.slice`). Negative indices raise — `char.slice` rejects them.
-_substr :: (s, a, b) ~> do {
+_substr := (s, a, b) ~> do {
   if a < 0 || b < 0 {
     error.raise("str-js: slice: negative index")
   } else {
@@ -278,7 +278,7 @@ _substr :: (s, a, b) ~> do {
 -- miss. The UTF-16 offset from `indexOf` is converted by measuring the
 -- prefix. Empty haystack is -1 even for an empty needle (`find_idx`
 -- scans zero chars).
-_find :: (s, pat) ~> do {
+_find := (s, pat) ~> do {
   if s == "" {
     0 - 1
   } else {
@@ -294,7 +294,7 @@ _find :: (s, pat) ~> do {
 -- `str.rfind` core: rightmost occurrence as a CODE-POINT index.
 -- `lastIndexOf` gives the greatest UTF-16 start offset — the same
 -- position `str-handl`'s scan records (overlapping matches included).
-_rfind :: (s, pat) ~> do {
+_rfind := (s, pat) ~> do {
   if pat == "" {
     _slen(s)
   } else {
@@ -313,7 +313,7 @@ _rfind :: (s, pat) ~> do {
 
 -- `str.lines` core (Rust `str::lines`): `\r\n` is one terminator, a
 -- trailing `\n` yields no trailing empty piece, `""` yields `[""]`.
-_lines :: (s) ~> do {
+_lines := (s) ~> do {
   if _slen(s) == 0 {
     [""]
   } else {
@@ -350,7 +350,7 @@ _lines :: (s) ~> do {
 }
 
 -- `str.split_whitespace` core (Rust `str::split_whitespace`).
-_split_ws :: (s) ~> do {
+_split_ws := (s) ~> do {
   cs := _ldrop_while(_chars(s), c ~> _is_ws_c(c))
   cur := []
   pieces := []
@@ -372,7 +372,7 @@ _split_ws :: (s) ~> do {
 
 -- `str.levenshtein` core: two-row DP over the code-point char lists,
 -- O(n*m) time / O(m) space — ported from `str-handl`.
-_lev :: (a, b) ~> do {
+_lev := (a, b) ~> do {
   min3 := (x, y, z) ~> do {
     ab := if x < y { x } else { y }
     if ab < z { ab } else { z }
@@ -410,7 +410,7 @@ _lev :: (a, b) ~> do {
 
 -- `str.pad_left`/`pad_right` core: cycle the code points of `p` to fill
 -- `s` to `n` chars (ported from `str-handl`'s `pad_to`).
-_pad_to :: (s, n, p, is_left) ~> do {
+_pad_to := (s, n, p, is_left) ~> do {
   c := _slen(s)
   if c >= n {
     s
@@ -442,7 +442,7 @@ _pad_to :: (s, n, p, is_left) ~> do {
 -- `str-handl`'s `split_words`: camel/Pascal boundary detection over the
 -- code-point char list (`-`, `_`, ` ` are separators; lower->upper and
 -- acronym->word boundaries split). Ported faithfully.
-_split_words :: (s) ~> do {
+_split_words := (s) ~> do {
   is_sep := (c) ~> if c == "-" {
     true
   } else {
@@ -507,7 +507,7 @@ _split_words :: (s) ~> do {
 -- `capitalize_first`: uppercase the first char, leave the rest
 -- untouched (used by `camel_case`/`pascal_case`, whose words arrive
 -- already lowercased from `_split_words`).
-_cap_first :: (w) ~> do {
+_cap_first := (w) ~> do {
   wc := _chars(w)
   match wc {
     []: "",
