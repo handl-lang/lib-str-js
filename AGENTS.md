@@ -12,7 +12,7 @@ signatures).
 | `src/index.hnl` | all 45 contract arrows in one module |
 | `src/index.test.hnl` | the .hnl test suite |
 | `pkg.hnl` | manifest — `modules: ["str-js"]`, deps `str` + `js` |
-| `scripts/hnl-gate.sh`, `ci.sh` | the gate / bupha entry |
+| `scripts/hnl-gate.sh`, `workflows/gate.yaml` | the gate / bupha entry |
 
 ## Contract
 
