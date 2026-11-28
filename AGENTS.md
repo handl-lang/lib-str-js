@@ -11,7 +11,7 @@ signatures).
 | --- | --- |
 | `src/index.hnl` | all 45 contract arrows in one module |
 | `src/index.test.hnl` | the .hnl test suite |
-| `pkg.hnl` | manifest — `modules: ["str-js"]`, deps `str` + `js` |
+| `pkg.hnl` | manifest — `modules: ["str-js"]`, dep `str` only (`js` is a host/builtin contract, NOT a dep — see Contract) |
 | `scripts/hnl-gate.sh`, `workflows/gate.yaml` | the gate / bupha entry |
 
 ## Contract
@@ -26,6 +26,15 @@ signatures).
   indices; `replace` is literal `join(split(...))` (no `$`-pattern
   surprises); `is_*` classifiers use `\p{...}` Unicode property
   escapes. List values marshal via the `js_object` descriptor.
+- `js` stays out of `pkg.hnl` `deps` and `.handl.toml`
+  `[dependencies]`: the `js` contract is a host/builtin surface
+  (compile-js binds `from "js"` to `__handl_rt` shims regardless of
+  dep tables). Declaring the dep makes `hnl run`/`hnl test` resolve
+  `js` to `lib-js`'s signature-only exports — `call` erases to `null`
+  and every call dies with "callee is not an arrow-value". Undeclared,
+  the import lowers to the ambient `"js.call"` callee and fails
+  honestly as `call_host: function 'js.call' not found` on hosts
+  without JS natives (the shape `scripts/hnl-gate.sh` tolerates).
 - `index.hnl`'s header lists the full divergence list (JS trim set vs
   `White_Space`, context-sensitive whole-string case conversion,
   per-char ffi cost on composed paths).

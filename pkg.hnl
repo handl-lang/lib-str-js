@@ -1,3 +1,7 @@
 -- lib-str-js: modules this package provides (entry defaults to
 -- src/index.hnl; N modules resolve to src/<name>/index.hnl).
-{ modules: ["str-js"], name: "str-js", deps: { str: "branch:main", js: "branch:main" }, description: "JavaScript implementation of the str ports (via the js ffi).", license: "MIT" }
+-- `js` is intentionally NOT a dep: it is a host/builtin contract
+-- (compile-js binds `from "js"` to __handl_rt shims regardless of dep
+-- tables); declaring it resolves `js` to lib-js's signature-erased
+-- exports instead of the ambient `js.*` call_host surface. See AGENTS.md.
+{ modules: ["str-js"], name: "str-js", deps: { str: "branch:main" }, description: "JavaScript implementation of the str ports (via the js ffi).", license: "MIT" }
